@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Mapa 3D — Câmara Fria</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0a1628; color: #e8edf2; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; overflow: hidden; }
+
+#ui-overlay {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  background: linear-gradient(180deg, rgba(10,22,40,.95) 0%, rgba(10,22,40,.0) 100%);
+  padding: 10px 14px 30px;
+}
+.ui-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ui-title { font-size: 15px; font-weight: 800; color: #2f9e44; }
+.ui-cam-sel {
+  background: #1a2535; border: 1.5px solid #2a3a4e; color: #e8edf2;
+  border-radius: 8px; padding: 6px 10px; font-size: 12px; outline: none; cursor: pointer;
+}
+.ui-btn {
+  background: #1a2535; border: 1.5px solid #2a3a4e; color: #e8edf2;
+  border-radius: 8px; padding: 6px 10px; font-size: 11px; cursor: pointer;
+  transition: all .2s;
+}
+.ui-btn:hover { border-color: #2f9e44; color: #2f9e44; }
+.ui-btn.ativo { background: #2f9e44; border-color: #2f9e44; color: white; }
+.legenda { display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+.leg { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #7a8fa6; }
+.leg-sq { width: 12px; height: 12px; border-radius: 3px; }
+
+#canvas3d { position: fixed; top: 0; left: 0; width: 100%; height: 100%; }
+
+#info-painel {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  background: linear-gradient(0deg, rgba(10,22,40,1) 60%, rgba(10,22,40,0) 100%);
+  padding: 20px 14px 14px;
+  transition: all .3s;
+}
+.info-card {
+  background: #1a2535; border: 1.5px solid #2a3a4e; border-radius: 12px;
+  padding: 12px 14px; max-width: 400px;
+  display: none;
+}
+.info-card.show { display: block; }
+.info-lote { font-size: 14px; font-weight: 700; color: #2f9e44; }
+.info-sub { font-size: 11px; color: #7a8fa6; margin-top: 2px; }
+.info-bags { font-size: 20px; font-weight: 900; margin-top: 6px; }
+.info-btns { display: flex; gap: 7px; margin-top: 10px; flex-wrap: wrap; }
+.info-btn {
+  background: #2f9e44; color: white; border: none; border-radius: 7px;
+  padding: 7px 13px; font-size: 12px; font-weight: 700; cursor: pointer;
+}
+.info-btn.sec { background: #1565c0; }
+.info-btn.ter { background: #e65100; }
+
+#hint { position: fixed; bottom: 14px; right: 14px; font-size: 10px; color: #3a4a5e; text-align: right; line-height: 1.6; }
+
+#loading3d {
+  position: fixed; inset: 0; background: #0a1628;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  z-index: 200; gap: 16px;
+}
+.spinner3d { width: 40px; height: 40px; border: 3px solid #1a2535; border-top-color: #2f9e44; border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div id="loading3d">
+  <div class="spinner3d"></div>
+  <div style="color:#7a8fa6;font-size:13px">Carregando visualização 3D...</div>
+</div>
+
+<canvas id="canvas3d"></canvas>
+
+<div id="ui-overlay">
+  <div class="ui-top">
+    <span class="ui-title">🏭 Mapa 3D — Sistema de Gestão de Lotes</span>
+    <select id="sel-cam" class="ui-cam-sel" onchange="trocarCamara(this.value)">
+      <option value="1">Câmara Fria 1 (AC 01–10)</option>
+      <option value="2">Câmara Fria 2 (AC 11–20)</option>
+      <option value="3">Câmara Fria 3 (AC 21–30)</option>
+      <option value="4">Câmara Fria 4 (AC 31–40)</option>
+      <option value="5">Câmara Fria 5 (AC 41–50)</option>
+      <option value="6">Câmara Fria 6 (AC 51–60)</option>
+    </select>
+    <button class="ui-btn" onclick="resetCamera()">⟳ Reset câmera</button>
+    <button class="ui-btn" id="btn-auto" onclick="toggleAutoRotate()">▶ Auto-rotacionar</button>
+    <button class="ui-btn" onclick="window.open(document.referrer||'index.html','_self')">← Voltar ao Sistema</button>
+  </div>
+  <div class="legenda">
+    <div class="leg"><div class="leg-sq" style="background:#2f9e44"></div>Ocupado (cheio)</div>
+    <div class="leg"><div class="leg-sq" style="background:#e65100"></div>Ponta (parcial)</div>
+    <div class="leg"><div class="leg-sq" style="background:#1a2535;border:1px solid #2a3a4e"></div>Vazio</div>
+    <div class="leg"><div class="leg-sq" style="background:#1565c0"></div>Selecionado</div>
+  </div>
+</div>
+
+<div id="info-painel">
+  <div class="info-card" id="info-card">
+    <div class="info-lote" id="inf-lote">—</div>
+    <div class="info-sub" id="inf-sub">—</div>
+    <div class="info-bags" id="inf-bags">—</div>
+    <div id="inf-status" style="font-size:11px;margin-top:4px"></div>
+    <div class="info-btns">
+      <button class="info-btn" onclick="irParaLote()">✏️ Editar Lote</button>
+      <button class="info-btn sec" onclick="irParaCarregamento()">🚛 Carregar</button>
+      <button class="info-btn ter" onclick="irParaTransferencia()">🔄 Transferir</button>
+    </div>
+  </div>
+  <div id="inf-vazio" style="font-size:12px;color:#3a4a5e;padding:4px 0">Clique em um Big Bag para ver detalhes · Arraste para rotacionar · Scroll para zoom</div>
+</div>
+
+<div id="hint">
+  🖱️ Arrastar = rotacionar<br>
+  🖱️ Scroll = zoom<br>
+  📱 2 dedos = zoom<br>
+  📱 1 dedo = rotacionar
+</div>
+
+<script>
+// ============================================================
+// DADOS DO SISTEMA (lidos do localStorage da página principal)
+// ============================================================
+var DB = { lotes: [], cars: [], trs: [] };
+var CAMS = {
+  1:{nome:'Câmara Fria 1',fils:[
+    {e:'AC 01',d:'AC 10',n:13,t:'S'},{e:'AC 02',d:'AC 09',n:13,t:'D'},
+    {e:'AC 03',d:'AC 08',n:13,t:'S'},{e:'AC 04',d:'AC 07',n:13,t:'D'},
+    {e:'AC 05',d:'AC 06',n:13,t:'S'}]},
+  2:{nome:'Câmara Fria 2',fils:[
+    {e:'AC 11',d:'AC 20',n:14,t:'S'},{e:'AC 12',d:'AC 19',n:14,t:'D'},
+    {e:'AC 13',d:'AC 18',n:14,t:'S'},{e:'AC 14',d:'AC 17',n:14,t:'D'},
+    {e:'AC 15',d:'AC 16',n:14,t:'S'}]},
+  3:{nome:'Câmara Fria 3',fils:[
+    {e:'AC 21',d:'AC 30',n:10,t:'S'},{e:'AC 22',d:'AC 29',n:10,t:'D'},
+    {e:'AC 23',d:'AC 28',n:10,t:'S'},{e:'AC 24',d:'AC 27',n:10,t:'D'},
+    {e:'AC 25',d:'AC 26',n:10,t:'S'}]},
+  4:{nome:'Câmara Fria 4',fils:[
+    {e:'AC 31',d:'AC 40',n:8,t:'S'},{e:'AC 32',d:'AC 39',n:8,t:'D'},
+    {e:'AC 33',d:'AC 38',n:8,t:'S'},{e:'AC 34',d:'AC 37',n:8,t:'D'},
+    {e:'AC 35',d:'AC 36',n:8,t:'S'}]},
+  5:{nome:'Câmara Fria 5',fils:[
+    {e:'AC 41',d:'AC 50',n:5,t:'S'},{e:'AC 42',d:'AC 49',n:8,t:'D'},
+    {e:'AC 43',d:'AC 48',n:5,t:'S'},{e:'AC 44',d:'AC 47',n:8,t:'D'},
+    {e:'AC 45',d:'AC 46',n:5,t:'S'}]},
+  6:{nome:'Câmara Fria 6',fils:[
+    {e:'AC 51',d:'AC 60',n:5,t:'S'},{e:'AC 52',d:'AC 59',n:8,t:'D'},
+    {e:'AC 53',d:'AC 58',n:5,t:'S'},{e:'AC 54',d:'AC 57',n:8,t:'D'},
+    {e:'AC 55',d:'AC 56',n:5,t:'S'}]}
+};
+
+function carregarDadosLocais() {
+  try {
+    var s = localStorage.getItem('scf_v2');
+    if (s) {
+      var d = JSON.parse(s);
+      DB.lotes = d.lotes || [];
+      DB.cars  = d.cars  || [];
+      DB.trs   = d.trs   || [];
+    }
+  } catch(e) { console.error(e); }
+}
+
+function GL(ac, lado, ln) {
+  return DB.lotes.find(function(l) {
+    if (l.acesso !== ac || l.status === 'Removido' || (parseInt(l.bagsR)||0) <= 0) return false;
+    var ladoOk = !lado || !l.lado || l.lado === lado || l.lado === 'Ambos';
+    if (!ladoOk) return false;
+    if (!l.linhas) return true;
+    var pts = l.linhas.toString().split(',');
+    for (var i = 0; i < pts.length; i++) {
+      var p = pts[i].trim().split('-');
+      if (p.length === 2 && ln >= parseInt(p[0]) && ln <= parseInt(p[1])) return true;
+      if (p.length === 1 && ln === parseInt(p[0])) return true;
+    }
+    return false;
+  });
+}
+
+// ============================================================
+// MOTOR 3D — WebGL puro (sem dependências externas)
+// ============================================================
+var canvas = document.getElementById('canvas3d');
+var gl;
+var camAtual = 1;
+var autoRotate = false;
+var selecionado = null;
+var loteAtual = null;
+
+// Câmera orbital
+var cam = { theta: 0.4, phi: 0.9, dist: 45, tx: 0, ty: 0 };
+var mouse = { down: false, x: 0, y: 0, button: 0 };
+var touch = { active: false, dist: 0, x: 0, y: 0 };
+
+// Objetos 3D
+var objetos = [];   // { mesh, lote, ac, lado, ln }
+var paredes = [];
+
+function init3D() {
+  try {
+    gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    if (!gl) { alert('WebGL não suportado neste dispositivo.'); return; }
+  } catch(e) { alert('Erro ao iniciar 3D: '+e); return; }
+
+  redimensionar();
+  window.addEventListener('resize', redimensionar);
+
+  // Compilar shaders
+  var vsrc = `
+    attribute vec3 aPos;
+    attribute vec3 aNorm;
+    attribute vec3 aColor;
+    uniform mat4 uMVP;
+    uniform mat4 uModel;
+    uniform vec3 uLuz;
+    varying vec3 vColor;
+    varying float vDifusa;
+    void main(){
+      vec4 wPos = uModel * vec4(aPos,1.0);
+      gl_Position = uMVP * vec4(aPos,1.0);
+      vec3 n = normalize((uModel * vec4(aNorm,0.0)).xyz);
+      vDifusa = max(dot(n,normalize(uLuz)),0.0)*0.7+0.3;
+      vColor = aColor;
+    }`;
+  var fsrc = `
+    precision mediump float;
+    varying vec3 vColor;
+    varying float vDifusa;
+    void main(){
+      gl_FragColor = vec4(vColor*vDifusa,1.0);
+    }`;
+
+  var prog = criarPrograma(vsrc, fsrc);
+  if (!prog) return;
+
+  gl.prog = prog;
+  gl.aPos   = gl.getAttribLocation(prog, 'aPos');
+  gl.aNorm  = gl.getAttribLocation(prog, 'aNorm');
+  gl.aColor = gl.getAttribLocation(prog, 'aColor');
+  gl.uMVP   = gl.getUniformLocation(prog, 'uMVP');
+  gl.uModel = gl.getUniformLocation(prog, 'uModel');
+  gl.uLuz   = gl.getUniformLocation(prog, 'uLuz');
+
+  gl.enable(gl.DEPTH_TEST);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+  carregarDadosLocais();
+  construirCena(camAtual);
+
+  // Eventos
+  canvas.addEventListener('mousedown',  mdown);
+  canvas.addEventListener('mousemove',  mmove);
+  canvas.addEventListener('mouseup',    mup);
+  canvas.addEventListener('wheel',      mwheel);
+  canvas.addEventListener('click',      mclick);
+  canvas.addEventListener('touchstart', tstart, {passive:false});
+  canvas.addEventListener('touchmove',  tmove,  {passive:false});
+  canvas.addEventListener('touchend',   tend);
+
+  document.getElementById('loading3d').style.display = 'none';
+  loop();
+}
+
+// ---- Shaders ----
+function criarShader(tipo, src) {
+  var s = gl.createShader(tipo);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+    console.error(gl.getShaderInfoLog(s)); return null;
+  }
+  return s;
+}
+function criarPrograma(vsrc, fsrc) {
+  var vs = criarShader(gl.VERTEX_SHADER, vsrc);
+  var fs = criarShader(gl.FRAGMENT_SHADER, fsrc);
+  if (!vs || !fs) return null;
+  var p = gl.createProgram();
+  gl.attachShader(p, vs); gl.attachShader(p, fs);
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+    console.error(gl.getProgramInfoLog(p)); return null;
+  }
+  return p;
+}
+
+// ---- Geometria do Big Bag ----
+function gerarBigBag(x, y, z, cor, sel) {
+  // Big bag: cubo levemente arredondado nas arestas
+  // Dimensões reais aproximadas: 1.2m x 1.2m x 1.3m altura
+  var w = 1.1, h = 1.25, d = 1.1;
+  var r = 0.08; // raio das quinas
+
+  var verts = [], norms = [], cors = [];
+
+  var c = sel ? [0.08, 0.39, 0.75] : cor;
+
+  // Gerar faces do cubo com subdivisões nas quinas para efeito arredondado
+  function face(x1,y1,z1, x2,y2,z2, x3,y3,z3, x4,y4,z4, nx,ny,nz) {
+    verts.push(x1,y1,z1, x2,y2,z2, x3,y3,z3);
+    verts.push(x1,y1,z1, x3,y3,z3, x4,y4,z4);
+    for(var i=0;i<6;i++){ norms.push(nx,ny,nz); cors.push(c[0],c[1],c[2]); }
+  }
+
+  var hw=w/2, hd=d/2;
+  // Frente
+  face(x-hw,y,z+hd, x+hw,y,z+hd, x+hw,y+h,z+hd, x-hw,y+h,z+hd, 0,0,1);
+  // Trás
+  face(x+hw,y,z-hd, x-hw,y,z-hd, x-hw,y+h,z-hd, x+hw,y+h,z-hd, 0,0,-1);
+  // Esquerda
+  face(x-hw,y,z-hd, x-hw,y,z+hd, x-hw,y+h,z+hd, x-hw,y+h,z-hd, -1,0,0);
+  // Direita
+  face(x+hw,y,z+hd, x+hw,y,z-hd, x+hw,y+h,z-hd, x+hw,y+h,z+hd, 1,0,0);
+  // Baixo
+  face(x-hw,y,z-hd, x+hw,y,z-hd, x+hw,y,z+hd, x-hw,y,z+hd, 0,-1,0);
+  // Topo
+  face(x-hw,y+h,z+hd, x+hw,y+h,z+hd, x+hw,y+h,z-hd, x-hw,y+h,z-hd, 0,1,0);
+
+  // Alças (cilindros simplificados no topo)
+  var ah = 0.25;
+  [[-0.3],[0.3]].forEach(function(ax){
+    // Alça frente
+    face(x+ax[0]-0.07, y+h, z-0.1,  x+ax[0]+0.07, y+h, z-0.1,
+         x+ax[0]+0.07, y+h+ah, z-0.1,  x+ax[0]-0.07, y+h+ah, z-0.1, 0,0,-1);
+    face(x+ax[0]-0.07, y+h, z+0.1,  x+ax[0]+0.07, y+h, z+0.1,
+         x+ax[0]+0.07, y+h+ah, z+0.1,  x+ax[0]-0.07, y+h+ah, z+0.1, 0,0,1);
+    face(x+ax[0]-0.07, y+h, z-0.1,  x+ax[0]-0.07, y+h, z+0.1,
+         x+ax[0]-0.07, y+h+ah, z+0.1,  x+ax[0]-0.07, y+h+ah, z-0.1, -1,0,0);
+    face(x+ax[0]+0.07, y+h, z+0.1,  x+ax[0]+0.07, y+h, z-0.1,
+         x+ax[0]+0.07, y+h+ah, z-0.1,  x+ax[0]+0.07, y+h+ah, z+0.1, 1,0,0);
+  });
+
+  // Logo simplificada no centro (polígono verde escuro)
+  var lc = [0.12, 0.48, 0.22];
+  face(x-0.25, y+h*0.4, z+hd+0.001,  x+0.25, y+h*0.4, z+hd+0.001,
+       x+0.25, y+h*0.75, z+hd+0.001,  x-0.25, y+h*0.75, z+hd+0.001, 0,0,1);
+  // Sobrescreve com cor da logo
+  for(var i=cors.length-6;i<cors.length;i+=3){
+    cors[i]=lc[0]; cors[i+1]=lc[1]; cors[i+2]=lc[2];
+  }
+
+  return { verts: new Float32Array(verts), norms: new Float32Array(norms), cors: new Float32Array(cors) };
+}
+
+// ---- Criar buffer WebGL ----
+function criarBuffer(dados) {
+  var buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, dados, gl.STATIC_DRAW);
+  return buf;
+}
+
+// ---- Cena completa ----
+function construirCena(camIdx) {
+  objetos = [];
+  paredes = [];
+  selecionado = null;
+  loteAtual = null;
+  document.getElementById('info-card').classList.remove('show');
+  document.getElementById('inf-vazio').style.display = 'block';
+
+  var cfg = CAMS[camIdx];
+  var fils = cfg.fils;
+  var nFils = fils.length;
+
+  // Dimensões da cena
+  var passoCorredor = 6.0;  // espaço entre fileiras no eixo Z
+  var espaçoAC = 2.8;       // espaço entre acessos no eixo X
+  var bagW = 1.1, bagD = 1.1, bagH = 1.25;
+  var corridorW = 2.0;
+
+  var totalZ = nFils * passoCorredor;
+  var centroZ = totalZ / 2 - passoCorredor / 2;
+
+  fils.forEach(function(fil, fi) {
+    var posZ = fi * passoCorredor - centroZ;
+    var simples = fil.t === 'S';
+    var nLinE = fil.n, nLinD = fil.nd || fil.n;
+
+    // --- Lado Esquerdo ---
+    var startXE = -(corridorW/2 + (simples ? 1 : 2) * (bagW + 0.1) + 0.3);
+
+    if (simples) {
+      // 1 coluna de bags
+      for (var ln = 1; ln <= nLinE; ln++) {
+        var lote = GL(fil.e, '', ln);
+        var bR = lote ? parseInt(lote.bagsR)||0 : 0;
+        var bT = lote ? parseInt(lote.bagsT)||0 : 0;
+        var cor = lote
+          ? (bR >= bT ? [0.18,0.62,0.27] : [0.90,0.40,0.0])
+          : [0.10,0.16,0.23];
+        var xp = startXE;
+        var yp = 0;
+        var zp = posZ + (ln - nLinE/2 - 0.5) * (bagD + 0.05);
+        var geo = gerarBigBag(xp, yp, zp, cor, false);
+        var obj = {
+          bufV: criarBuffer(geo.verts),
+          bufN: criarBuffer(geo.norms),
+          bufC: criarBuffer(geo.cors),
+          count: geo.verts.length/3,
+          cx: xp, cy: yp, cz: zp,
+          lote: lote, ac: fil.e, lado: '', ln: ln,
+          cor: cor
+        };
+        objetos.push(obj);
+      }
+      // Label do acesso (cubo pequeno marcador)
+      criarLabel(startXE, 1.4, posZ, fil.e);
+
+    } else {
+      // 2 colunas (Direito e Esquerdo)
+      for (var ln = 1; ln <= nLinE; ln++) {
+        var zp = posZ + (ln - nLinE/2 - 0.5) * (bagD + 0.05);
+        ['Direito','Esquerdo'].forEach(function(lado, li) {
+          var lote = GL(fil.e, lado, ln);
+          var bR = lote ? parseInt(lote.bagsR)||0 : 0;
+          var bT = lote ? parseInt(lote.bagsT)||0 : 0;
+          var cor = lote
+            ? (bR >= bT ? [0.18,0.62,0.27] : [0.90,0.40,0.0])
+            : [0.10,0.16,0.23];
+          var xp = startXE - li * (bagW + 0.1);
+          var geo = gerarBigBag(xp, 0, zp, cor, false);
+          var obj = {
+            bufV: criarBuffer(geo.verts),
+            bufN: criarBuffer(geo.norms),
+            bufC: criarBuffer(geo.cors),
+            count: geo.verts.length/3,
+            cx: xp, cy: 0, cz: zp,
+            lote: lote, ac: fil.e, lado: lado, ln: ln,
+            cor: cor
+          };
+          objetos.push(obj);
+        });
+      }
+      criarLabel(startXE - (bagW+0.1)/2, 1.4, posZ, fil.e);
+    }
+
+    // --- Lado Direito ---
+    var startXD = corridorW/2 + 0.3;
+
+    if (simples) {
+      for (var ln = 1; ln <= nLinD; ln++) {
+        var lote = GL(fil.d, '', ln);
+        var bR = lote ? parseInt(lote.bagsR)||0 : 0;
+        var bT = lote ? parseInt(lote.bagsT)||0 : 0;
+        var cor = lote
+          ? (bR >= bT ? [0.18,0.62,0.27] : [0.90,0.40,0.0])
+          : [0.10,0.16,0.23];
+        var zp = posZ + (ln - nLinD/2 - 0.5) * (bagD + 0.05);
+        var geo = gerarBigBag(startXD, 0, zp, cor, false);
+        var obj = {
+          bufV: criarBuffer(geo.verts),
+          bufN: criarBuffer(geo.norms),
+          bufC: criarBuffer(geo.cors),
+          count: geo.verts.length/3,
+          cx: startXD, cy: 0, cz: zp,
+          lote: lote, ac: fil.d, lado: '', ln: ln,
+          cor: cor
+        };
+        objetos.push(obj);
+      }
+      criarLabel(startXD, 1.4, posZ, fil.d);
+    } else {
+      for (var ln = 1; ln <= nLinD; ln++) {
+        var zp = posZ + (ln - nLinD/2 - 0.5) * (bagD + 0.05);
+        ['Esquerdo','Direito'].forEach(function(lado, li) {
+          var lote = GL(fil.d, lado, ln);
+          var bR = lote ? parseInt(lote.bagsR)||0 : 0;
+          var bT = lote ? parseInt(lote.bagsT)||0 : 0;
+          var cor = lote
+            ? (bR >= bT ? [0.18,0.62,0.27] : [0.90,0.40,0.0])
+            : [0.10,0.16,0.23];
+          var xp = startXD + li * (bagW + 0.1);
+          var geo = gerarBigBag(xp, 0, zp, cor, false);
+          var obj = {
+            bufV: criarBuffer(geo.verts),
+            bufN: criarBuffer(geo.norms),
+            bufC: criarBuffer(geo.cors),
+            count: geo.verts.length/3,
+            cx: xp, cy: 0, cz: zp,
+            lote: lote, ac: fil.d, lado: lado, ln: ln,
+            cor: cor
+          };
+          objetos.push(obj);
+        });
+      }
+      criarLabel(startXD + (bagW+0.1)/2, 1.4, posZ, fil.d);
+    }
+
+    // Linha do corredor entre fileiras
+    if (fi < nFils - 1) {
+      criarCorredor(0, posZ + passoCorredor/2);
+    }
+  });
+
+  // Chão e paredes da câmara
+  criarEstrutura(cfg, fils, passoCorredor, centroZ);
+}
+
+function criarLabel(x, y, z, texto) {
+  // Plaquinha simples (cubo achatado)
+  var geo = gerarBox(x, y, z, 1.2, 0.3, 0.05, [0.12, 0.48, 0.22]);
+  paredes.push({
+    bufV: criarBuffer(geo.verts),
+    bufN: criarBuffer(geo.norms),
+    bufC: criarBuffer(geo.cors),
+    count: geo.verts.length/3
+  });
+}
+
+function criarCorredor(x, z) {
+  // Linha no chão (cubo muito achatado)
+  var geo = gerarBox(x, -0.02, z, 4.5, 0.03, 0.4, [0.08, 0.14, 0.22]);
+  paredes.push({
+    bufV: criarBuffer(geo.verts),
+    bufN: criarBuffer(geo.norms),
+    bufC: criarBuffer(geo.cors),
+    count: geo.verts.length/3
+  });
+}
+
+function criarEstrutura(cfg, fils, passo, centroZ) {
+  var half = fils.length * passo / 2 + 2;
+  var largura = 18;
+  var altura = 5;
+
+  // Chão
+  var geo = gerarBox(0, -0.1, 0, largura, 0.1, half*2, [0.06, 0.11, 0.18]);
+  paredes.push({bufV:criarBuffer(geo.verts),bufN:criarBuffer(geo.norms),bufC:criarBuffer(geo.cors),count:geo.verts.length/3});
+
+  // Parede esquerda
+  geo = gerarBox(-largura/2-0.1, altura/2, 0, 0.2, altura, half*2, [0.08,0.14,0.22]);
+  paredes.push({bufV:criarBuffer(geo.verts),bufN:criarBuffer(geo.norms),bufC:criarBuffer(geo.cors),count:geo.verts.length/3});
+
+  // Parede direita
+  geo = gerarBox(largura/2+0.1, altura/2, 0, 0.2, altura, half*2, [0.08,0.14,0.22]);
+  paredes.push({bufV:criarBuffer(geo.verts),bufN:criarBuffer(geo.norms),bufC:criarBuffer(geo.cors),count:geo.verts.length/3});
+
+  // Teto (translúcido - azul gelo)
+  geo = gerarBox(0, altura+0.1, 0, largura+0.5, 0.15, half*2+1, [0.06,0.20,0.35]);
+  paredes.push({bufV:criarBuffer(geo.verts),bufN:criarBuffer(geo.norms),bufC:criarBuffer(geo.cors),count:geo.verts.length/3});
+
+  // Porta (fundo)
+  geo = gerarBox(0, altura/2, -half-0.1, largura+0.5, altura, 0.2, [0.05,0.12,0.20]);
+  paredes.push({bufV:criarBuffer(geo.verts),bufN:criarBuffer(geo.norms),bufC:criarBuffer(geo.cors),count:geo.verts.length/3});
+  // Borda verde da porta
+  geo = gerarBox(0, altura/2, -half-0.05, 3.5, altura*0.85, 0.12, [0.10,0.36,0.18]);
+  paredes.push({bufV:criarBuffer(geo.verts),bufN:criarBuffer(geo.norms),bufC:criarBuffer(geo.cors),count:geo.verts.length/3});
+}
+
+function gerarBox(x, y, z, w, h, d, cor) {
+  var hw=w/2, hh=h/2, hd=d/2;
+  var verts=[], norms=[], cors=[];
+  function face(x1,y1,z1,x2,y2,z2,x3,y3,z3,x4,y4,z4,nx,ny,nz){
+    verts.push(x1,y1,z1,x2,y2,z2,x3,y3,z3,x1,y1,z1,x3,y3,z3,x4,y4,z4);
+    for(var i=0;i<6;i++){norms.push(nx,ny,nz);cors.push(cor[0],cor[1],cor[2]);}
+  }
+  face(x-hw,y-hh,z+hd,x+hw,y-hh,z+hd,x+hw,y+hh,z+hd,x-hw,y+hh,z+hd,0,0,1);
+  face(x+hw,y-hh,z-hd,x-hw,y-hh,z-hd,x-hw,y+hh,z-hd,x+hw,y+hh,z-hd,0,0,-1);
+  face(x-hw,y-hh,z-hd,x-hw,y-hh,z+hd,x-hw,y+hh,z+hd,x-hw,y+hh,z-hd,-1,0,0);
+  face(x+hw,y-hh,z+hd,x+hw,y-hh,z-hd,x+hw,y+hh,z-hd,x+hw,y+hh,z+hd,1,0,0);
+  face(x-hw,y-hh,z-hd,x+hw,y-hh,z-hd,x+hw,y-hh,z+hd,x-hw,y-hh,z+hd,0,-1,0);
+  face(x-hw,y+hh,z+hd,x+hw,y+hh,z+hd,x+hw,y+hh,z-hd,x-hw,y+hh,z-hd,0,1,0);
+  return {verts:new Float32Array(verts),norms:new Float32Array(norms),cors:new Float32Array(cors)};
+}
+
+// ============================================================
+// RENDER LOOP
+// ============================================================
+var mat4 = {
+  identidade: function(){ return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]); },
+  mult: function(a,b){
+    var r=new Float32Array(16);
+    for(var i=0;i<4;i++) for(var j=0;j<4;j++) { var s=0; for(var k=0;k<4;k++) s+=a[i*4+k]*b[k*4+j]; r[i*4+j]=s; }
+    return r;
+  },
+  perspectiva: function(fov,asp,n,f){
+    var t=Math.tan(fov/2);
+    return new Float32Array([1/(asp*t),0,0,0, 0,1/t,0,0, 0,0,-(f+n)/(f-n),-1, 0,0,-2*f*n/(f-n),0]);
+  },
+  lookat: function(ex,ey,ez,cx,cy,cz){
+    var fx=cx-ex,fy=cy-ey,fz=cz-ez;
+    var fl=Math.sqrt(fx*fx+fy*fy+fz*fz); fx/=fl;fy/=fl;fz/=fl;
+    var rx=fy*0-fz*1,ry=fz*0-fx*0,rz=fx*1-fy*0; // up=(0,1,0)
+    var rl=Math.sqrt(rx*rx+ry*ry+rz*rz); rx/=rl;ry/=rl;rz/=rl;
+    var ux=ry*fz-rz*fy,uy=rz*fx-rx*fz,uz=rx*fy-ry*fx;
+    return new Float32Array([rx,ux,-fx,0, ry,uy,-fy,0, rz,uz,-fz,0,
+      -(rx*ex+ry*ey+rz*ez),-(ux*ex+uy*ey+uz*ez),-(-fx*ex-fy*ey-fz*ez),1]);
+  }
+};
+
+function calcularMVP() {
+  var ex = cam.dist * Math.sin(cam.phi) * Math.sin(cam.theta) + cam.tx;
+  var ey = cam.dist * Math.cos(cam.phi) + cam.ty;
+  var ez = cam.dist * Math.sin(cam.phi) * Math.cos(cam.theta);
+  var view = mat4.lookat(ex,ey,ez, cam.tx,cam.ty,0);
+  var proj = mat4.perspectiva(0.7, canvas.width/canvas.height, 0.1, 500);
+  return { mvp: mat4.mult(proj,view), eye: [ex,ey,ez] };
+}
+
+function desenharObjeto(obj) {
+  gl.bindBuffer(gl.ARRAY_BUFFER, obj.bufV);
+  gl.vertexAttribPointer(gl.aPos, 3, gl.FLOAT, false, 0, 0);
+  gl.enableVertexAttribArray(gl.aPos);
+  gl.bindBuffer(gl.ARRAY_BUFFER, obj.bufN);
+  gl.vertexAttribPointer(gl.aNorm, 3, gl.FLOAT, false, 0, 0);
+  gl.enableVertexAttribArray(gl.aNorm);
+  gl.bindBuffer(gl.ARRAY_BUFFER, obj.bufC);
+  gl.vertexAttribPointer(gl.aColor, 3, gl.FLOAT, false, 0, 0);
+  gl.enableVertexAttribArray(gl.aColor);
+  gl.uniformMatrix4fv(gl.uModel, false, mat4.identidade());
+  gl.drawArrays(gl.TRIANGLES, 0, obj.count);
+}
+
+var lastT = 0;
+function loop(t) {
+  t = t || 0;
+  var dt = (t - lastT) / 1000; lastT = t;
+  if (autoRotate) cam.theta += dt * 0.3;
+
+  redimensionar();
+  gl.clearColor(0.04, 0.09, 0.16, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.useProgram(gl.prog);
+
+  var r = calcularMVP();
+  gl.uniformMatrix4fv(gl.uMVP, false, r.mvp);
+  gl.uniform3fv(gl.uLuz, [r.eye[0], r.eye[1]+5, r.eye[2]]);
+
+  paredes.forEach(desenharObjeto);
+
+  objetos.forEach(function(obj, i) {
+    // Se selecionado, criar buffer novo com cor azul
+    if (selecionado === i) {
+      var geo = gerarBigBag(obj.cx, obj.cy, obj.cz, obj.cor, true);
+      obj.bufV = criarBuffer(geo.verts);
+      obj.bufN = criarBuffer(geo.norms);
+      obj.bufC = criarBuffer(geo.cors);
+      obj.count = geo.verts.length/3;
+    }
+    desenharObjeto(obj);
+  });
+
+  requestAnimationFrame(loop);
+}
+
+function redimensionar() {
+  if (canvas.width !== window.innerWidth || canvas.height !== window.innerHeight) {
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
+    if(gl) gl.viewport(0, 0, canvas.width, canvas.height);
+  }
+}
+
+// ============================================================
+// INTERAÇÃO: MOUSE E TOUCH
+// ============================================================
+function mdown(e) {
+  mouse.down = true; mouse.x = e.clientX; mouse.y = e.clientY; mouse.button = e.button;
+  mouse.moved = false;
+}
+function mmove(e) {
+  if (!mouse.down) return;
+  var dx = e.clientX - mouse.x, dy = e.clientY - mouse.y;
+  if (Math.abs(dx)+Math.abs(dy) > 2) mouse.moved = true;
+  if (mouse.button === 0) { cam.theta -= dx*0.008; cam.phi = Math.max(0.15, Math.min(Math.PI/2.05, cam.phi + dy*0.008)); }
+  else if (mouse.button === 2) { cam.tx -= dx*0.08; cam.ty += dy*0.08; }
+  mouse.x = e.clientX; mouse.y = e.clientY;
+}
+function mup(e) { mouse.down = false; }
+function mwheel(e) {
+  e.preventDefault();
+  cam.dist = Math.max(5, Math.min(120, cam.dist + e.deltaY*0.05));
+}
+function mclick(e) {
+  if (mouse.moved) return;
+  selecionarPorRaio(e.clientX, e.clientY);
+}
+canvas.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+
+function tstart(e) {
+  e.preventDefault();
+  if (e.touches.length === 1) {
+    touch.active = true; touch.x = e.touches[0].clientX; touch.y = e.touches[0].clientY;
+    touch.moved = false;
+  } else if (e.touches.length === 2) {
+    touch.dist = Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
+    touch.active = false;
+  }
+}
+function tmove(e) {
+  e.preventDefault();
+  if (e.touches.length === 1 && touch.active) {
+    var dx=e.touches[0].clientX-touch.x, dy=e.touches[0].clientY-touch.y;
+    if (Math.abs(dx)+Math.abs(dy) > 3) touch.moved = true;
+    cam.theta -= dx*0.01; cam.phi = Math.max(0.15, Math.min(Math.PI/2.05, cam.phi+dy*0.01));
+    touch.x=e.touches[0].clientX; touch.y=e.touches[0].clientY;
+  } else if (e.touches.length === 2) {
+    var nd = Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
+    cam.dist = Math.max(5, Math.min(120, cam.dist - (nd-touch.dist)*0.2));
+    touch.dist = nd;
+  }
+}
+function tend(e) {
+  if (e.touches.length === 0 && touch.active && !touch.moved) {
+    selecionarPorRaio(touch.x, touch.y);
+  }
+  touch.active = false;
+}
+
+// ============================================================
+// RAY PICKING — detectar qual bag foi clicado
+// ============================================================
+function selecionarPorRaio(px, py) {
+  // Ray casting simplificado — compara distância projetada
+  var melhor = -1, menorDist = Infinity;
+  var r = calcularMVP();
+
+  objetos.forEach(function(obj, i) {
+    var pos = projetarPonto(obj.cx, obj.cy + 0.6, obj.cz, r.mvp);
+    if (!pos) return;
+    var dx = pos.x - px, dy = pos.y - py;
+    var d = Math.sqrt(dx*dx + dy*dy);
+    if (d < 40 && d < menorDist) { menorDist = d; melhor = i; }
+  });
+
+  if (melhor >= 0) {
+    selecionado = melhor;
+    var obj = objetos[melhor];
+    mostrarInfo(obj);
+    // Recriar buffer original para deselecionar o anterior
+    objetos.forEach(function(o, i) {
+      if (i !== melhor) {
+        var geo = gerarBigBag(o.cx, o.cy, o.cz, o.cor, false);
+        o.bufV = criarBuffer(geo.verts);
+        o.bufN = criarBuffer(geo.norms);
+        o.bufC = criarBuffer(geo.cors);
+      }
+    });
+  } else {
+    selecionado = null;
+    loteAtual = null;
+    document.getElementById('info-card').classList.remove('show');
+    document.getElementById('inf-vazio').style.display = 'block';
+  }
+}
+
+function projetarPonto(wx, wy, wz, mvp) {
+  var x=mvp[0]*wx+mvp[4]*wy+mvp[8]*wz+mvp[12];
+  var y=mvp[1]*wx+mvp[5]*wy+mvp[9]*wz+mvp[13];
+  var w=mvp[3]*wx+mvp[7]*wy+mvp[11]*wz+mvp[15];
+  if (w <= 0) return null;
+  return {
+    x: (x/w*0.5+0.5)*canvas.width,
+    y: (-y/w*0.5+0.5)*canvas.height
+  };
+}
+
+function mostrarInfo(obj) {
+  loteAtual = obj.lote;
+  var card = document.getElementById('info-card');
+  document.getElementById('inf-vazio').style.display = 'none';
+  card.classList.add('show');
+
+  if (obj.lote) {
+    var l = obj.lote;
+    var bR = parseInt(l.bagsR)||0, bT = parseInt(l.bagsT)||0;
+    var pct = bT > 0 ? Math.round(bR/bT*100) : 0;
+    var cor = bR >= bT ? '#2f9e44' : '#e65100';
+    document.getElementById('inf-lote').textContent = l.lote + (l.cultivar?' — '+l.cultivar:'');
+    document.getElementById('inf-sub').textContent = 'C'+camAtual+' | '+obj.ac+(obj.lado?' | '+obj.lado:'')+' | Linha '+obj.ln;
+    document.getElementById('inf-bags').innerHTML = '<span style="color:'+cor+'">'+bR+' bags</span> <span style="font-size:12px;color:#7a8fa6">de '+bT+' ('+pct+'%)</span>';
+    document.getElementById('inf-status').innerHTML = '<span style="background:'+(bR>=bT?'#1e4d2b':'#7a2500')+';color:white;padding:2px 8px;border-radius:99px;font-size:10px">'+(bR>=bT?'Completo':'Ponta')+'</span>';
+  } else {
+    document.getElementById('inf-lote').textContent = 'Posição Vazia';
+    document.getElementById('inf-sub').textContent = 'C'+camAtual+' | '+obj.ac+(obj.lado?' | '+obj.lado:'')+' | Linha '+obj.ln;
+    document.getElementById('inf-bags').innerHTML = '<span style="color:#3a4a5e">0 bags</span>';
+    document.getElementById('inf-status').innerHTML = '<span style="background:#1a2535;color:#7a8fa6;padding:2px 8px;border-radius:99px;font-size:10px;border:1px solid #2a3a4e">Vazio</span>';
+  }
+}
+
+// ============================================================
+// CONTROLES DE UI
+// ============================================================
+function trocarCamara(v) {
+  camAtual = parseInt(v);
+  cam.theta = 0.4; cam.phi = 0.9; cam.dist = 45; cam.tx = 0; cam.ty = 0;
+  // Limpar buffers antigos
+  objetos.forEach(function(o){ gl.deleteBuffer(o.bufV);gl.deleteBuffer(o.bufN);gl.deleteBuffer(o.bufC); });
+  paredes.forEach(function(p){ gl.deleteBuffer(p.bufV);gl.deleteBuffer(p.bufN);gl.deleteBuffer(p.bufC); });
+  carregarDadosLocais();
+  construirCena(camAtual);
+}
+
+function resetCamera() {
+  cam.theta = 0.4; cam.phi = 0.9; cam.dist = 45; cam.tx = 0; cam.ty = 0;
+}
+
+function toggleAutoRotate() {
+  autoRotate = !autoRotate;
+  var btn = document.getElementById('btn-auto');
+  btn.textContent = autoRotate ? '⏸ Pausar' : '▶ Auto-rotacionar';
+  btn.classList.toggle('ativo', autoRotate);
+}
+
+// Abrir sistema principal com filtro
+function irParaLote() {
+  if (!loteAtual) return;
+  localStorage.setItem('scf_ir_lote', loteAtual.id);
+  window.open('index.html#lotes', '_blank');
+}
+function irParaCarregamento() {
+  if (!loteAtual) return;
+  localStorage.setItem('scf_ir_car', loteAtual.id);
+  window.open('index.html#car', '_blank');
+}
+function irParaTransferencia() {
+  if (!loteAtual) return;
+  localStorage.setItem('scf_ir_tr', loteAtual.id);
+  window.open('index.html#tr', '_blank');
+}
+
+// Iniciar quando página carregar
+window.addEventListener('load', init3D);
+window.addEventListener('message', function(e) {
+  if (e.data && e.data.tipo === 'trocarCam') {
+    var sel = document.getElementById('sel-cam');
+    if (sel) { sel.value = e.data.cam; trocarCamara(e.data.cam); }
+  }
+});
+</script>
+</body>
+</html>
